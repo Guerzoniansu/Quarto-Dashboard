@@ -1,0 +1,1298 @@
+---
+title: "Covid 19 Time Series"
+author: "Guerzoniansu"
+format: 
+  dashboard:
+    logo: logo/logo.ico
+    nav-buttons: [github]
+    github: https://github.com/Guerzoniansu/Quarto-Dashboard
+    css: "css/styles.css"
+    toc: true
+theme: [flatly]
+fig-width: 10
+fig-asp: 0.3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+#| context: setup
+#| message: false
+
+library(tidyverse)
+library(dplyr)
+library(gt)
+library(gtsummary)
+library(here)
+library(scales)
+library(shiny)
+library(DT)
+library(gt)
+library(shinyWidgets)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggplot2)
+library(ggspatial)
+library(knitr)
+library(sf)
+```
+
+```{r}
+#| label: clean-working-env
+#| message: false
+
+rm(list=ls())
+```
+
+```{r}
+#| label: load-data
+#| message: false
+
+cv <- read.csv("data/time-series-19-covid-combined.csv")
+```
+
+```{r}
+#| label: general-vars
+
+time_period <- "22/01 to 17/10"
+year <- "2020"
+```
+
+
+```{r}
+#| label: data-preparation
+
+names(cv) = c("date", "country", "province", "lat", "long", "confirmed", "recovered", "deaths")
+cv <- subset(cv, select = -province)
+
+cv$date <- as.Date(cv$date)
+```
+
+
+# {.sidebar}
+
+
+This dashboard displays statistics for:
+
+|              |                     |
+|--------------|---------------------|
+| **Domain**   | World |
+| **Data**     | [Covid 19 Time series](https://www.kaggle.com/datasets/niketchauhan/covid-19-time-series-data)  |
+| **Year**    | `{r} year`   |
+| **Period**    | `{r} time_period`   |
+
+---------------------------------------------------------------
+
+Dataset Composition:
+
+|              |                     |
+|--------------|:---------------------|
+| *Date*   | 22/01/2020 to 17/10/2020 |
+| *Country/Region* | Countries affected by Covid-19  |
+| *Province/State*    | Specific states in the Country   |
+| *Lat*    | Latitude of the Country   |
+| *Long*    | Longitude of the Country   |
+| *Confirmed*    | Total Number of Confirmed Cases per day   |
+| *Recovered*    | Total Number of Recovery Cases per day   |
+| *Deaths*    | Total Number of Death Cases per day   |
+| *Number of observations*    | 72090   |
+
+: {tbl-colwidths="\[40,60\]"}
+
+---------------------------------------------------------------
+
+::: {.callout-note collapse="true"}
+## Disclaimer
+
+This dataset is daily time series data of all the COVID 19 confirmed, recovered and death cases across different nations in the world. Source: [Kaggle](https://www.kaggle.com/datasets/niketchauhan/covid-19-time-series-data)
+:::
+
+---------------------------------------------------------------
+
+
+# All
+
+
+```{r}
+#| label: calculate-sums
+
+cv_group_sum <- cv |>
+  group_by(date) |>
+  summarise(
+    sum_confirmed = sum(confirmed, na.rm = TRUE),
+    sum_recovered = sum(recovered, na.rm = TRUE),
+    sum_deaths = sum(deaths, na.rm = TRUE)
+  )
+
+```
+
+
+```{r}
+#| label: calculate-average-growth-per-month
+
+cv_growth <- cv_group_sum |>
+  mutate(month = floor_date(date, "month")) |>
+  group_by(month) |>
+  summarize(monthly_sum_confirmed = mean(sum_confirmed, na.rm = TRUE),
+            monthly_sum_recovered = mean(sum_recovered, na.rm = TRUE),
+            monthly_sum_deaths = mean(sum_deaths, na.rm = TRUE))
+
+cv_growth <- cv_growth |>
+  arrange(month) %>%
+  mutate(
+    growth_confirmed = (monthly_sum_confirmed - lag(monthly_sum_confirmed)) / lag(monthly_sum_confirmed) * 100,
+    growth_recovered = (monthly_sum_recovered - lag(monthly_sum_recovered)) / lag(monthly_sum_recovered) * 100,
+    growth_deaths = (monthly_sum_deaths - lag(monthly_sum_deaths)) / lag(monthly_sum_deaths) * 100
+  )
+
+average_monthly_growth <- cv_growth |>
+  summarize(average_growth_confirmed = mean(growth_confirmed, na.rm = TRUE),
+            average_growth_recovered = mean(growth_recovered, na.rm = TRUE),
+            average_growth_deaths = mean(growth_deaths, na.rm = TRUE))
+```
+
+
+
+## Row {height=25%}
+
+
+```{r}
+#| content: valuebox
+#| title: "Growth in confirmed cases"
+list(
+  icon = "person-add",
+  color = "warning",
+  value = ceiling(average_monthly_growth$average_growth_confirmed[1])
+)
+```
+
+
+```{r}
+#| content: valuebox
+#| title: "Growth in recovered cases"
+list(
+  icon = "person-check",
+  color = "success",
+  value = ceiling(average_monthly_growth$average_growth_recovered[1])
+)
+```
+
+
+```{r}
+#| content: valuebox
+#| title: "Growth in death cases"
+list(
+  icon = "person-x",
+  color = "danger",
+  value = ceiling(average_monthly_growth$average_growth_deaths[1])
+)
+```
+
+
+## Row {height=75%}
+
+
+```{r}
+#| label: plot-evolution-cases-sum
+
+plot <- ggplot() +
+  geom_line(data = cv_group_sum, aes(x = date, y = sum_confirmed/1000000, color = "Confirmed"), size = 1) +
+  geom_line(data = cv_group_sum, aes(x = date, y = sum_recovered/1000000, color = "Recovered"), size = 1) +
+  geom_line(data = cv_group_sum, aes(x = date, y = sum_deaths/1000000, color = "Deaths"), size = 1) +
+  scale_color_manual(values = c("Confirmed" = "#89A8C3", "Recovered" = "#00b893", "Deaths" = "#D9534F")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(
+    title = expression(italic("Figure: Evolution of number of cases in the world (in millions)")),
+    x = "Date",
+    y = "Cases",
+    colour = "",  # Empty label for color legend
+    caption = "Source: Kaggle Covid 19 data series"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(color = "#89A8C3", face = "italic", size = 10, vjust = 8, hjust = -0.09),
+    plot.caption = element_text(face = "italic", hjust = -0.09),
+    panel.grid.major.x = element_line(colour = "grey", size = 0.1, linetype = "solid"),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey", size = 0.1, linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    legend.position = "top",  # Adjusted to a valid position within the plot
+    legend.direction = "horizontal",
+    plot.margin = margin(1, 1, 1, 1, "cm")
+  )
+
+plot
+```
+
+
+### Column
+
+::: {.card}
+This graph shows that the number of confirmed cases of Covid 19 increased exponentially through January to October 2020. Going from  almost no cases in the world to 40 million cases around the world. One thing, also noticable is the fact that the number of recovered cases also quickly increase as time went on. Mostly due to the fact that medicines were found to stop the propagation of the disease and also to the confinement
+:::
+
+```{r}
+#| label: world-map
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Create the world map
+ggplot(data = world) +
+  geom_sf() +
+  theme_minimal() +
+  labs(title = "World Map",
+       caption = "Data source: Natural Earth")
+```
+
+```{r}
+month_translation <- c(
+  "janvier" = "January",
+  "février" = "February",
+  "mars" = "March",
+  "avril" = "April",
+  "mai" = "May",
+  "juin" = "June",
+  "juillet" = "July",
+  "août" = "August",
+  "septembre" = "September",
+  "octobre" = "October",
+  "novembre" = "November",
+  "décembre" = "December"
+)
+```
+
+
+# Confirmed
+
+
+## Row {height=25%}
+
+
+
+```{r}
+#| label: plot-evolution-confirmed-sum
+
+plot <- ggplot() +
+  geom_line(data = cv_group_sum, aes(x = date, y = sum_confirmed/1000000, color = "Confirmed"), size = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(
+    title = expression(italic("Figure: Evolution of number of confirmed cases in the world (in millions)")),
+    x = "Date",
+    y = "Cases",
+    colour = "",  # Empty label for color legend
+    caption = "Source: Kaggle Covid 19 data series"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(color = "#89A8C3", face = "italic", size = 10, vjust = 8, hjust = -0.09),
+    plot.caption = element_text(face = "italic", hjust = -0.09),
+    panel.grid.major.x = element_line(colour = "grey", size = 0.1, linetype = "solid"),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey", size = 0.1, linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(1, 1, 1, 1, "cm")
+  )
+
+plot
+```
+
+::: {.card}
+```{r}
+cv_growth_u <- cv_growth |>
+  dplyr::mutate(month = lubridate::month(month, label = TRUE, abbr = FALSE)) |>
+  dplyr::select(month, growth_confirmed)
+
+cv_growth_u <- cv_growth_u %>%
+  mutate(month = recode(month, !!!month_translation))
+```
+
+```{r}
+knitr::kable(cv_growth_u, col.names = c("Month", "Growth in confirmed cases"))
+```
+
+
+:::
+
+## Row {height=25%}
+
+
+```{r}
+#| label: extract-interest-cv-con
+
+cv_e <- cv |>
+  group_by(year = year(date), month = month(date)) |>
+  dplyr::filter(date == max(date)) |>
+  ungroup() |>
+  filter(month >= 1 & month <= 10 & year == 2020) |>
+  dplyr::select(-year, -month)
+```
+
+
+
+```{r}
+#| label: prepare-world-map-con
+
+world <- ne_countries(scale = "medium", returnclass = "sf") |>
+      dplyr::filter(admin != "Antarctica")
+    
+target_crs <- "+proj=moll"
+world_moll <- world |>
+  st_transform(crs = target_crs)
+
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-01-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+
+
+```{r}
+#| label: plot-world-map-jan-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (January)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-02-29"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-feb-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (February)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-03-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-mar-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (March)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-04-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-apr-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (April)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-05-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-may-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (May)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-06-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-jun-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (June)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-07-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-jul-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (July)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-08-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-aug-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (August)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-09-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-sep-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (September)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-10-17"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-oct-con
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = confirmed), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Confirmed Cases by Country (October)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+
+# Recovered
+
+
+## Row {height=25%}
+
+
+
+```{r}
+#| label: plot-evolution-recovered-sum
+
+plot <- ggplot() +
+  geom_line(data = cv_group_sum, aes(x = date, y = sum_recovered/1000000, color = "Recovered"), size = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(
+    title = expression(italic("Figure: Evolution of number of recovered cases in the world (in millions)")),
+    x = "Date",
+    y = "Cases",
+    colour = "",  # Empty label for color legend
+    caption = "Source: Kaggle Covid 19 data series"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(color = "#89A8C3", face = "italic", size = 10, vjust = 8, hjust = -0.09),
+    plot.caption = element_text(face = "italic", hjust = -0.09),
+    panel.grid.major.x = element_line(colour = "grey", size = 0.1, linetype = "solid"),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey", size = 0.1, linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(1, 1, 1, 1, "cm")
+  )
+
+plot
+```
+
+::: {.card}
+```{r}
+cv_growth_u <- cv_growth |>
+  dplyr::mutate(month = lubridate::month(month, label = TRUE, abbr = FALSE)) |>
+  dplyr::select(month, growth_recovered)
+
+cv_growth_u <- cv_growth_u %>%
+  mutate(month = recode(month, !!!month_translation))
+```
+
+```{r}
+knitr::kable(cv_growth_u, col.names = c("Month", "Growth in recovered cases"))
+```
+:::
+
+## Row {height=25%}
+
+
+
+```{r}
+#| label: prepare-world-map-rec
+
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-01-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+
+
+```{r}
+#| label: plot-world-map-jan-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (January)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-02-29"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-feb-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (February)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-03-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-mar-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (March)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-04-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-apr-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (April)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-05-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-may-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (May)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-06-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-jun-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (June)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-07-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-jul-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (July)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-08-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-aug-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (August)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-09-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-sep-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (September)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-10-17"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-oct-rec
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = recovered), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Recovered Cases by Country (October)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+# Deaths
+
+
+## Row {height=25%}
+
+
+
+```{r}
+#| label: plot-evolution-deaths-sum
+
+plot <- ggplot() +
+  geom_line(data = cv_group_sum, aes(x = date, y = sum_deaths/1000000, color = "Deaths"), size = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(
+    title = expression(italic("Figure: Evolution of number of death cases in the world (in millions)")),
+    x = "Date",
+    y = "Cases",
+    colour = "",  # Empty label for color legend
+    caption = "Source: Kaggle Covid 19 data series"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(color = "#89A8C3", face = "italic", size = 10, vjust = 8, hjust = -0.09),
+    plot.caption = element_text(face = "italic", hjust = -0.09),
+    panel.grid.major.x = element_line(colour = "grey", size = 0.1, linetype = "solid"),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey", size = 0.1, linetype = "dashed"),
+    panel.grid.minor.y = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(1, 1, 1, 1, "cm")
+  )
+
+plot
+```
+
+::: {.card}
+```{r}
+cv_growth_u <- cv_growth |>
+  dplyr::mutate(month = lubridate::month(month, label = TRUE, abbr = FALSE)) |>
+  dplyr::select(month, growth_deaths)
+
+cv_growth_u <- cv_growth_u %>%
+  mutate(month = recode(month, !!!month_translation))
+```
+
+```{r}
+knitr::kable(cv_growth_u, col.names = c("Month", "Growth in death cases"))
+```
+:::
+
+## Row {height=25%}
+
+
+
+```{r}
+#| label: prepare-world-map-deaths
+
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-01-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+
+
+```{r}
+#| label: plot-world-map-jan-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (January)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-02-29"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-feb-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (February)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-03-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-mar-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Deaths Cases by Country (March)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-04-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-apr-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (April)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-05-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-may-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (May)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-06-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-jun-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (June)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-07-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-jul-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (July)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-08-31"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-aug-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (August)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-09-30"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-sep-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (September)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+
+```{r}
+df <- cv_e |>
+  dplyr::filter(date == as.Date("2020-10-17"))
+
+world_moll_u <- left_join(world_moll, df, by = c("name" = "country"))
+```
+
+
+```{r}
+#| label: plot-world-map-oct-deaths
+
+plot <- ggplot(world_moll_u) +
+  geom_sf(aes(fill = deaths), color = "white") +
+  scale_fill_viridis_c(
+    trans = "sqrt",
+    labels = scales::percent_format(scale = 1)) +
+  labs(fill = NULL, title = "Covid-19 Death Cases by Country (October)",
+       caption = "Source: Kaggle Covid 19 Time series") +
+  theme_bw() +
+  theme(panel.background = element_rect(fill = "aliceblue")) +
+  theme(legend.position = "right")
+
+plot
+```
+
+
+# Data
+
+```{r}
+#| title: "Data table of Covid 19 time series"
+#| padding: 0px
+#| width: "100%"
+#| label: display-data-table
+
+cv |>
+  arrange(date) |>
+  datatable(
+    colnames = c("Date", "Country", "Latitude", "Longitude", "Confirmed", "Recovered", "Deaths"),
+    options = list(dom = 'ftp', paging = TRUE)
+    )
+```
+
